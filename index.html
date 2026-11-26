@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#03060d" />
+<meta name="description" content="A rotating particle Christmas tree — Christmas Tree v17.6" />
+<title>Merry Christmas · 圣诞树 v17.6</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#03060d}
+  canvas#scene{position:fixed;inset:0;display:block;width:100%;height:100%}
+
+  .overlay{
+    position:fixed;inset:0;pointer-events:none;
+    display:flex;flex-direction:column;align-items:center;
+    padding:clamp(18px,5vh,58px) 18px 0;
+    font-family:Georgia,"Times New Roman","Songti SC",serif;
+    text-align:center;
+  }
+  .title{
+    font-size:clamp(26px,5.4vw,62px);
+    line-height:1.05;
+    letter-spacing:.15em;
+    text-transform:uppercase;
+    background:linear-gradient(180deg,#fffaf0 0%,#f7dfa2 46%,#e0b062 74%,#b98a41 100%);
+    -webkit-background-clip:text;background-clip:text;
+    -webkit-text-fill-color:transparent;color:#f3d08a;
+    filter:drop-shadow(0 0 22px rgba(255,196,110,.35));
+    animation:shimmer 6s ease-in-out infinite;
+    max-width:92vw;
+    text-wrap:balance;
+  }
+  @keyframes shimmer{
+    0%,100%{filter:drop-shadow(0 0 18px rgba(255,196,110,.30))}
+    50%{filter:drop-shadow(0 0 34px rgba(255,214,140,.55))}
+  }
+  .sub{
+    margin-top:clamp(8px,1.6vh,18px);
+    font-family:"Helvetica Neue",Arial,"PingFang SC",sans-serif;
+    font-size:clamp(9px,1.15vw,13px);
+    letter-spacing:.42em;
+    text-transform:uppercase;
+    color:rgba(226,238,255,.44);
+    text-indent:.42em;
+  }
+  .hint{
+    position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));
+    transform:translateX(-50%);
+    font-family:"Helvetica Neue",Arial,"PingFang SC",sans-serif;
+    font-size:clamp(10px,1.1vw,12.5px);
+    letter-spacing:.12em;
+    color:rgba(210,228,245,.34);
+    white-space:nowrap;pointer-events:none;
+  }
+  .btns{
+    position:fixed;right:max(14px,env(safe-area-inset-right));
+    bottom:max(14px,env(safe-area-inset-bottom));
+    display:flex;gap:8px;pointer-events:auto;
+  }
+  .btn{
+    font-family:"Helvetica Neue",Arial,"PingFang SC",sans-serif;
+    font-size:12px;letter-spacing:.08em;
+    color:rgba(232,242,255,.78);
+    background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.16);
+    border-radius:999px;
+    padding:8px 15px;
+    cursor:pointer;
+    backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);
+    transition:.25s ease;
+  }
+  .btn:hover{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.3)}
+  .btn:active{transform:scale(.96)}
+  @media (max-width:600px){
+    .title{font-size:clamp(19px,6.9vw,32px);letter-spacing:.07em;line-height:1.2}
+    .sub{font-size:9.5px;letter-spacing:.26em;margin-top:10px}
+  }
+  @media (max-width:520px){ .hint{display:none} }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div class="overlay">
+  <h1 class="title">Merry Christmas</h1>
+  <div class="sub">Christmas Tree · V 17.6</div>
+</div>
+
+<div class="hint">移动鼠标改变旋转 · 点击画面撒一把星光</div>
+<div class="btns">
+  <button class="btn" id="btnPause" type="button">暂停</button>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('scene');
+  var ctx = cv.getContext('2d', { alpha: false });
+
+  var W = 0, H = 0, DPR = 1;
+
+  var bg = document.createElement('canvas');
+  var bgx = bg.getContext('2d');
+
+  var state = {
+    rot: 0, time: 0, speed: 0.30, targetSpeed: 0.30,
+    paused: false, cx: 0, baseY: 0, th: 0, baseR: 0,
+    focal: 1, camZ: 1,
+    items: [], stars: [], flakes: [], sparks: []
+  };
+
+  /* ---------- sprite helpers ---------- */
+  function radialSprite(size, stops) {
+    var c = document.createElement('canvas');
+    c.width = c.height = size;
+    var g = c.getContext('2d');
+    var r = size / 2;
+    var rg = g.createRadialGradient(r, r, 0, r, r, r);
+    for (var i = 0; i < stops.length; i++) rg.addColorStop(stops[i][0], stops[i][1]);
+    g.fillStyle = rg;
+    g.beginPath();
+    g.arc(r, r, r, 0, Math.PI * 2);
+    g.fill();
+    return c;
+  }
+
+  function ornamentSprite(rgb) {
+    return radialSprite(128, [
+      [0, 'rgba(' + rgb + ',1)'],
+      [0.28, 'rgba(' + rgb + ',0.72)'],
+      [0.6, 'rgba(' + rgb + ',0.18)'],
+      [1, 'rgba(' + rgb + ',0)']
+    ]);
+  }
+
+  var SPR = {
+    glow: radialSprite(256, [
+      [0, 'rgba(56,210,140,0.30)'],
+      [0.42, 'rgba(18,120,80,0.14)'],
+      [1, 'rgba(6,40,30,0)']
+    ]),
+    ground: radialSprite(256, [
+      [0, 'rgba(70,200,200,0.26)'],
+      [0.45, 'rgba(24,110,120,0.10)'],
+      [1, 'rgba(0,0,0,0)']
+    ]),
+    star: radialSprite(256, [
+      [0, 'rgba(255,252,238,1)'],
+      [0.14, 'rgba(255,232,170,0.80)'],
+      [0.4, 'rgba(255,196,96,0.28)'],
+      [1, 'rgba(255,176,60,0)']
+    ]),
+    spark: radialSprite(96, [
+      [0, 'rgba(255,255,255,0.95)'],
+      [0.35, 'rgba(255,222,170,0.45)'],
+      [1, 'rgba(255,200,120,0)']
+    ])
+  };
+
+  var ORN_COLORS = [
+    { rgb: '255,86,96', spr: ornamentSprite('255,86,96') },
+    { rgb: '255,206,112', spr: ornamentSprite('255,206,112') },
+    { rgb: '122,196,255', spr: ornamentSprite('122,196,255') },
+    { rgb: '236,246,255', spr: ornamentSprite('236,246,255') },
+    { rgb: '206,152,255', spr: ornamentSprite('206,152,255') }
+  ];
+
+  /* ---------- background ---------- */
+  function buildBackground() {
+    bg.width = Math.max(1, Math.floor(W * DPR));
+    bg.height = Math.max(1, Math.floor(H * DPR));
+    var g = bgx;
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    g.clearRect(0, 0, W, H);
+
+    var sky = g.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#03080f');
+    sky.addColorStop(0.42, '#061426');
+    sky.addColorStop(0.74, '#082231');
+    sky.addColorStop(1, '#04101a');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, W, H);
+
+    var rg = g.createRadialGradient(W * 0.22, H * 0.10, 0, W * 0.22, H * 0.10, Math.max(W, H) * 0.62);
+    rg.addColorStop(0, 'rgba(34,116,148,0.22)');
+    rg.addColorStop(1, 'rgba(34,116,148,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, W, H);
+
+    rg = g.createRadialGradient(W * 0.84, H * 0.26, 0, W * 0.84, H * 0.26, Math.max(W, H) * 0.52);
+    rg.addColorStop(0, 'rgba(96,44,128,0.16)');
+    rg.addColorStop(1, 'rgba(96,44,128,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, W, H);
+
+    rg = g.createRadialGradient(W * 0.5, H * 0.93, 0, W * 0.5, H * 0.93, Math.max(W, H) * 0.58);
+    rg.addColorStop(0, 'rgba(12,52,52,0.50)');
+    rg.addColorStop(1, 'rgba(12,52,52,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, W, H);
+
+    rg = g.createRadialGradient(W * 0.5, H * 0.55, Math.min(W, H) * 0.18, W * 0.5, H * 0.55, Math.max(W, H) * 0.78);
+    rg.addColorStop(0, 'rgba(0,0,0,0)');
+    rg.addColorStop(1, 'rgba(0,0,0,0.62)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, W, H);
+  }
+
+  /* ---------- tree geometry ---------- */
+  function buildTree() {
+    var cx = W / 2;
+    var baseY = H * 0.905;
+    var th = Math.min(H * 0.585, W * 1.35);
+    var baseR = th * 0.345;
+
+    state.cx = cx;
+    state.baseY = baseY;
+    state.th = th;
+    state.baseR = baseR;
+    state.focal = th * 7.30;
+    state.camZ = th * 7.60;
+
+    var areaFactor = Math.min(1, Math.sqrt((W * H) / (1440 * 900)));
+    var density = Math.max(0.62, areaFactor);
+
+    var leaves = Math.round(3050 * density);
+    var tiers = 7;
+    var greens = [
+      [14, 78, 48], [18, 104, 62], [26, 140, 80],
+      [44, 178, 104], [86, 216, 146], [148, 238, 190]
+    ];
+
+    var items = [];
+
+    for (var i = 0; i < leaves; i++) {
+      var u = Math.random();
+      var t = Math.pow(u, 0.82);
+      var gt = t * tiers;
+      var tier = Math.min(tiers - 1, Math.floor(gt));
+      var lt = gt - tier;
+      var flare = 0.72 + 0.28 * (1 - lt) * (1 - lt * 0.30);
+      var radius = baseR * (1 - t) * flare * (0.90 + 0.10 * Math.random());
+      var a = Math.random() * Math.PI * 2;
+      var x = Math.cos(a) * radius;
+      var z = Math.sin(a) * radius;
+      var y = t * th + (Math.random() - 0.5) * th * 0.010;
+
+      var w = Math.random();
+      var gi = w < 0.30 ? 1 : (w < 0.52 ? 0 : (w < 0.74 ? 2 : (w < 0.90 ? 3 : (w < 0.975 ? 4 : 5))));
+      var c = greens[gi];
+      var al = 0.50 + Math.random() * 0.48;
+      var size = 1.5 + Math.random() * 2.4;
+
+      items.push({
+        kind: 0, x: x, y: y, z: z, size: size,
+        cA: 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + al.toFixed(2) + ')',
+        cB: 'rgba(' + (c[0] * 0.34 | 0) + ',' + (c[1] * 0.40 | 0) + ',' + (c[2] * 0.40 | 0) + ',' + (al * 0.62).toFixed(2) + ')'
+      });
+    }
+
+    // golden helix garland
+    var gCount = Math.round(330 * density);
+    var turns = 6.6;
+    for (var j = 0; j < gCount; j++) {
+      var tg = j / gCount;
+      var ag = tg * turns * Math.PI * 2;
+      var rgd = baseR * (1 - tg) * 0.93;
+      items.push({
+        kind: 1,
+        x: Math.cos(ag) * rgd,
+        y: tg * th + th * 0.012,
+        z: Math.sin(ag) * rgd,
+        size: 1.7 + Math.random() * 1.1,
+        cA: 'rgba(255,222,140,' + (0.55 + Math.random() * 0.30).toFixed(2) + ')'
+      });
+    }
+
+    // ornaments
+    var ornCount = Math.round(46 * Math.max(0.7, density));
+    for (var k = 0; k < ornCount; k++) {
+      var tk = Math.pow(Math.random(), 0.85) * 0.97;
+      var gi2 = Math.floor(Math.random() * ORN_COLORS.length);
+      var ak = Math.random() * Math.PI * 2;
+      var rk = baseR * (1 - tk) * 0.97;
+      items.push({
+        kind: 2,
+        x: Math.cos(ak) * rk,
+        y: tk * th,
+        z: Math.sin(ak) * rk,
+        size: 5.5 + Math.random() * 6.5,
+        spr: ORN_COLORS[gi2].spr,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.7 + Math.random() * 1.2
+      });
+    }
+
+    state.items = items;
+
+    // star field
+    var sc = Math.round(110 * Math.max(0.6, density));
+    var stars = [];
+    for (var s = 0; s < sc; s++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.72,
+        r: Math.random() < 0.82 ? 1 : 1.8,
+        a: 0.25 + Math.random() * 0.55,
+        ph: Math.random() * Math.PI * 2,
+        sp: 0.4 + Math.random() * 1.1
+      });
+    }
+    state.stars = stars;
+
+    buildSnow(density);
+  }
+
+  function buildSnow(density) {
+    var n = Math.round(165 * density);
+    var flakes = [];
+    for (var i = 0; i < n; i++) {
+      flakes.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        r: 0.7 + Math.random() * 2.0,
+        vy: 22 + Math.random() * 62,
+        drift: (Math.random() - 0.5) * 26,
+        ph: Math.random() * Math.PI * 2,
+        a: 0.24 + Math.random() * 0.46
+      });
+    }
+    state.flakes = flakes;
+  }
+
+  /* ---------- update ---------- */
+  function updateSnow(dt) {
+    for (var i = 0; i < state.flakes.length; i++) {
+      var f = state.flakes[i];
+      f.y += f.vy * dt;
+      f.ph += dt * 0.9;
+      f.x += (f.drift + Math.sin(f.ph) * 14) * dt;
+      if (f.y > H + 8) { f.y = -8; f.x = Math.random() * W; }
+      if (f.x < -12) f.x = W + 10;
+      if (f.x > W + 12) f.x = -10;
+    }
+  }
+
+  function updateSparks(dt) {
+    for (var i = state.sparks.length - 1; i >= 0; i--) {
+      var p = state.sparks[i];
+      p.life -= dt;
+      if (p.life <= 0) { state.sparks.splice(i, 1); continue; }
+      p.vy += 62 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.985;
+    }
+  }
+
+  /* ---------- draw ---------- */
+  function draw() {
+    var cx = state.cx, baseY = state.baseY, th = state.th, baseR = state.baseR;
+    var t = state.time;
+
+    ctx.drawImage(bg, 0, 0, W, H);
+
+    // stars
+    for (var i = 0; i < state.stars.length; i++) {
+      var s = state.stars[i];
+      var a = s.a * (0.55 + 0.45 * Math.sin(t * s.sp + s.ph));
+      ctx.fillStyle = 'rgba(198,226,255,' + a.toFixed(3) + ')';
+      ctx.fillRect(s.x - s.r / 2, s.y - s.r / 2, s.r, s.r);
+    }
+
+    // soft glows behind the tree
+    ctx.globalAlpha = 0.85;
+    var gr = th * 1.55;
+    ctx.drawImage(SPR.glow, cx - gr, baseY - th * 0.55 - gr * 0.72, gr * 2, gr * 2);
+    ctx.globalAlpha = 1;
+
+    // ground pool of light
+    var gw = baseR * 4.2, gh = baseR * 1.45;
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(SPR.ground, cx - gw / 2, baseY - gh * 0.42, gw, gh);
+    ctx.globalAlpha = 1;
+
+    // ---- project & sort ----
+    var cr = Math.cos(state.rot), sr = Math.sin(state.rot);
+    var tilt = Math.sin(t * 0.22) * 0.085;
+    var ct = Math.cos(tilt), st = Math.sin(tilt);
+    var focal = state.focal, camZ = state.camZ;
+
+    var items = state.items;
+    for (var p = 0; p < items.length; p++) {
+      var it = items[p];
+      var x1 = it.x * cr - it.z * sr;
+      var z1 = it.x * sr + it.z * cr;
+      var y1 = it.y * ct - z1 * st;
+      var z2 = it.y * st + z1 * ct;
+      var sc = focal / (camZ - z2);
+      it._z = z1;
+      it._x = cx + x1 * sc;
+      it._y = baseY - y1 * sc;
+      it._s = sc;
+    }
+    items.sort(function (a, b) { return a._z - b._z; });
+
+    for (var q = 0; q < items.length; q++) {
+      var it2 = items[q];
+      var sy = it2._y;
+      if (sy < -40 || sy > H + 40) continue;
+
+      if (it2.kind === 0) {
+        var sz = it2.size * (0.72 + it2._s * 0.28);
+        ctx.fillStyle = it2._z > 0 ? it2.cA : it2.cB;
+        ctx.fillRect(it2._x - sz / 2, sy - sz / 2, sz, sz);
+      } else if (it2.kind === 1) {
+        var gs = it2.size * 2.6 * it2._s;
+        ctx.globalAlpha = (it2._z > 0 ? 0.95 : 0.45) * (0.75 + 0.25 * Math.sin(t * 2.1 + it2.x));
+        ctx.fillStyle = it2.cA;
+        ctx.fillRect(it2._x - it2.size * 0.35, sy - it2.size * 0.35, it2.size * 0.7, it2.size * 0.7);
+        ctx.globalAlpha = 1;
+        if (it2._z > 0) {
+          ctx.globalAlpha = 0.22;
+          ctx.drawImage(SPR.spark, it2._x - gs, sy - gs, gs * 2, gs * 2);
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        var os = it2.size * it2._s;
+        var tw = 0.58 + 0.42 * Math.sin(t * it2.speed * 2.2 + it2.phase);
+        ctx.globalAlpha = (it2._z > 0 ? 1 : 0.42) * tw;
+        ctx.drawImage(it2.spr, it2._x - os, sy - os, os * 2, os * 2);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // ---- star on top ----
+    var starY = baseY - th * 1.005;
+    var pulse = 0.78 + 0.22 * Math.sin(t * 1.6);
+    var big = th * 0.165 * pulse;
+    ctx.globalAlpha = 0.95;
+    ctx.drawImage(SPR.star, cx - big, starY - big, big * 2, big * 2);
+    ctx.globalAlpha = 1;
+
+    ctx.save();
+    ctx.translate(cx, starY);
+    ctx.rotate(t * 0.08);
+    starPath(ctx, th * 0.032);
+    ctx.fillStyle = 'rgba(255,250,232,' + (0.86 * pulse).toFixed(3) + ')';
+    ctx.fill();
+    ctx.restore();
+
+    // vertex hint
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(SPR.spark, cx - th * 0.03, starY - th * 0.03, th * 0.06, th * 0.06);
+    ctx.globalAlpha = 1;
+
+    // ---- snow ----
+    for (var i2 = 0; i2 < state.flakes.length; i2++) {
+      var f = state.flakes[i2];
+      var fa = f.a * (0.7 + 0.3 * Math.sin(t * 1.3 + f.ph));
+      ctx.fillStyle = 'rgba(226,240,255,' + fa.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ---- click sparks ----
+    for (var i3 = 0; i3 < state.sparks.length; i3++) {
+      var sp = state.sparks[i3];
+      var life = Math.max(0, p_life(sp));
+      ctx.globalAlpha = Math.min(1, life * 1.6) * 0.85;
+      var ss = sp.r * (0.6 + life);
+      ctx.drawImage(SPR.spark, sp.x - ss, sp.y - ss, ss * 2, ss * 2);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function p_life(sp) { return sp.life / sp.maxLife; }
+
+  function starPath(g, r) {
+    g.beginPath();
+    for (var i = 0; i < 5; i++) {
+      var a1 = -Math.PI / 2 + i * Math.PI * 2 / 5;
+      g.lineTo(Math.cos(a1) * r * 2.05, Math.sin(a1) * r * 2.05);
+      var a2 = a1 + Math.PI / 5;
+      g.lineTo(Math.cos(a2) * r * 0.86, Math.sin(a2) * r * 0.86);
+    }
+    g.closePath();
+  }
+
+  /* ---------- loop ---------- */
+  var last = 0;
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    if (!last) last = ts;
+    var dt = Math.min(0.05, Math.max(0, (ts - last) / 1000));
+    last = ts;
+    if (state.paused) return;
+
+    state.time += dt;
+    state.rot += state.speed * dt;
+    state.speed += (state.targetSpeed - state.speed) * Math.min(1, dt * 2.2);
+
+    updateSnow(dt);
+    updateSparks(dt);
+    draw();
+  }
+
+  /* ---------- interaction ---------- */
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * DPR);
+    cv.height = Math.floor(H * DPR);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    buildBackground();
+    buildTree();
+    if (state.paused) { /* keep frame */ } else { draw(); }
+  }
+
+  var moveTarget = null;
+  window.addEventListener('pointermove', function (e) {
+    moveTarget = Math.max(-0.28, Math.min(1.05, 0.30 + (e.clientX / W - 0.5) * 1.6));
+    state.targetSpeed = moveTarget;
+  }, { passive: true });
+
+  window.addEventListener('pointerleave', function () {
+    state.targetSpeed = 0.30;
+  });
+
+  cv.addEventListener('pointerdown', function (e) {
+    for (var i = 0; i < 26; i++) {
+      var ang = Math.random() * Math.PI * 2;
+      var spd = 40 + Math.random() * 130;
+      state.sparks.push({
+        x: e.clientX, y: e.clientY,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 60,
+        life: 0.7 + Math.random() * 0.9,
+        maxLife: 1.6,
+        r: 2 + Math.random() * 3.5
+      });
+    }
+  });
+
+  var btn = document.getElementById('btnPause');
+  btn.addEventListener('click', function () {
+    state.paused = !state.paused;
+    btn.textContent = state.paused ? '播放' : '暂停';
+    if (!state.paused) { last = 0; draw(); }
+  });
+
+  var rt = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(rt);
+    rt = setTimeout(resize, 120);
+  });
+  window.addEventListener('orientationchange', function () {
+    clearTimeout(rt);
+    rt = setTimeout(resize, 260);
+  });
+
+  resize();
+  state.rot = -0.35;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

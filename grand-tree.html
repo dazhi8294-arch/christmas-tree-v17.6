@@ -47,7 +47,7 @@ window.clearAllPhotos=()=>{if(confirm("确定要清空所有照片吗？")){clea
 window.closeDeleteManager=()=>{document.getElementById('delete-manager').classList.add('hidden')};
 function animate() {             requestAnimationFrame(animate); const dt=clock.getDelta(); const et=clock.getElapsedTime();             if(snowInstancedMesh&&STATE.mode==='TREE'){                 snowInstancedMesh.visible=true;                 for(let i=0;i<CONFIG.snow.count;i++){                     snowInstancedMesh.getMatrixAt(i,snowDummy.matrix);snowDummy.matrix.decompose(snowDummy.position,snowDummy.quaternion,snowDummy.scale);const d=snowData[i];                     snowDummy.position.y-=d.vy*CONFIG.snow.speed*dt;snowDummy.position.x+=Math.sin(et*0.5+i)*2.5*dt;snowDummy.position.z+=Math.cos(et*0.3+i)*1.5*dt;                     snowDummy.rotation.x+=d.rx*dt;snowDummy.rotation.y+=d.ry*dt;snowDummy.rotation.z+=d.rz*dt;                     if(snowDummy.position.y<-25){snowDummy.position.y=40;snowDummy.position.x=(Math.random()-0.5)*CONFIG.snow.range;snowDummy.position.z=(Math.random()-0.5)*CONFIG.snow.range;}                     snowDummy.updateMatrix();snowInstancedMesh.setMatrixAt(i,snowDummy.matrix);                 } snowInstancedMesh.instanceMatrix.needsUpdate=true;             } else if(snowInstancedMesh)snowInstancedMesh.visible=false;              if(manualRotateState.x!==0||manualRotateState.y!==0){const s=CONFIG.interaction.rotationSpeed*2.0;STATE.rotation.x+=manualRotateState.x*s*dt;STATE.rotation.y+=manualRotateState.y*s*dt;}             else if(STATE.mode==='SCATTER'&&STATE.hand.detected){const th=0.3,s=CONFIG.interaction.rotationSpeed;if(STATE.hand.x>th)STATE.rotation.y-=s*dt*(STATE.hand.x-th);else if(STATE.hand.x<-th)STATE.rotation.y-=s*dt*(STATE.hand.x+th);if(STATE.hand.y<-th)STATE.rotation.x+=s*dt*(-STATE.hand.y-th);else if(STATE.hand.y>th)STATE.rotation.x-=s*dt*(STATE.hand.y-th);}             else{if(STATE.mode==='TREE'){STATE.rotation.y+=0.3*dt;STATE.rotation.x+=(0-STATE.rotation.x)*2.0*dt;}else STATE.rotation.y+=0.1*dt;}                          mainGroup.rotation.y=STATE.rotation.y;mainGroup.rotation.x=STATE.rotation.x;             particleSystem.forEach(p=>p.update(dt,STATE.mode,STATE.focusTarget));             composer.render();         }         
 /* ================= 摄像头手势交互（点按钮才启用，不阻塞主场景） ================= */
-let videoEl = null, handLandmarker = null, camStream = null, camRunning = false, lastVideoTime = -1, lastModeAt = 0, lastGrabAt = 0;
+let videoEl = null, handLandmarker = null, camStream = null, camRunning = false, lastVideoTime = -1, lastModeAt = 0, lastGrabAt = 0, gLastLabel = '', gHold = 0;
 
 function setGestureHint(t){ const h = document.getElementById('gesture-hint'); if(h) h.innerText = t; }
 function setCamDot(on){ const d = document.getElementById('cam-status'); if(d) d.classList.toggle('active', !!on); }
@@ -75,7 +75,7 @@ async function startGesture(){
     });
     camRunning = true;
     if(btn) btn.style.display = 'none';
-    setGestureHint('手势已开启：张开五指=散开 · 握拳=聚合 · 捏合=抓照片 · 手掌移动=转视角');
+    setGestureHint('手势已开启：张手=散开 · 捏合=查看照片 · 握拳=圣诞树 · 手掌移动=转视角');
     predictWebcam();
   }catch(e){
     console.warn('[gesture]', e);
@@ -133,19 +133,53 @@ function processGestures(res, now){
   const ext = [fingerExtended(lm,4,2), fingerExtended(lm,8,6), fingerExtended(lm,12,10), fingerExtended(lm,16,14), fingerExtended(lm,20,18)];
   const count = ext.filter(Boolean).length;
 
-  if(pinch < 0.35){
-    if(now - lastGrabAt > 1200){ lastGrabAt = now; window.triggerPhotoGrab(); setGestureHint('手势：抓照片'); }
-    return;
+  /* 手势映射：张手=散开 · 捏合=查看照片 · 握拳=圣诞树 */
+  let label = 'NONE';
+  if(pinch < 0.34 && count <= 2) label = 'PINCH';
+  else if(count >= 4) label = 'OPEN';
+  else if(count <= 1) label = 'FIST';
+
+  if(label !== gLastLabel){ gLastLabel = label; gHold = 0; return; }
+  gHold++;
+  if(gHold < 2) return;
+  if(now - lastModeAt < 380) return;
+
+  if(label === 'PINCH'){
+    if(STATE.mode !== 'FOCUS'){
+      lastModeAt = now; lastGrabAt = now;
+      window.triggerPhotoGrab();
+      if(STATE.mode !== 'FOCUS'){
+        const photos = particleSystem.filter(p => p.type === 'PHOTO');
+        if(photos.length){
+          STATE.focusType = Math.floor(Math.random() * 4);
+          STATE.focusTarget = photos[Math.floor(Math.random() * photos.length)].mesh;
+          setMode('FOCUS');
+        }
+      }
+      setGestureHint('捏合：查看照片');
+    }
+  } else if(label === 'OPEN'){
+    if(STATE.mode !== 'SCATTER'){
+      lastModeAt = now;
+      window.setMode('SCATTER');
+      setGestureHint('张手：散开');
+    }
+  } else if(label === 'FIST'){
+    if(STATE.mode !== 'TREE'){
+      lastModeAt = now;
+      window.setMode('TREE');
+      setGestureHint('握拳：圣诞树');
+    }
+  } else if(STATE.mode === 'FOCUS'){
+    lastModeAt = now;
+    window.setMode('TREE');
+    setGestureHint('松手：回到圣诞树');
   }
-  if(STATE.mode === 'FOCUS'){ lastModeAt = now; window.setMode('SCATTER'); return; }
-  if(now - lastModeAt < 520) return;
-  if(count >= 4 && STATE.mode !== 'SCATTER'){ lastModeAt = now; window.setMode('SCATTER'); setGestureHint('手势：散开（张开五指）'); }
-  else if(count <= 1 && STATE.mode !== 'TREE'){ lastModeAt = now; window.setMode('TREE'); setGestureHint('手势：聚合（握拳）'); }
 }
 
 const camBtn = document.getElementById('cam-enable');
 if(camBtn) camBtn.addEventListener('click', startGesture);
-setTimeout(() => { if(!camRunning) setGestureHint('点右下角框内的「启用手势」开启镜头交互'); }, 1500);
+setTimeout(() => { if(!camRunning) setGestureHint('点右下角「启用手势」开始：张手=散开 · 捏合=查看照片 · 握拳=圣诞树'); }, 1500);
 
         
 init().catch(e=>{console.error("init failed",e); const l=document.getElementById("loader"); if(l){l.style.opacity=0; setTimeout(()=>l.remove(),200);} });     </script><script>
